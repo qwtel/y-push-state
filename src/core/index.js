@@ -7,7 +7,7 @@
  */
 
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved, import/extensions */
-import componentCore from 'y-component/src/componentCore';
+import componentCore from 'y-component/src/component-core';
 
 import { Observable } from 'rxjs-es/Observable';
 import { Subject } from 'rxjs-es/Subject';
@@ -34,8 +34,6 @@ import 'rxjs-es/add/operator/zip';
 import { shouldLoadAnchor, getScrollTop, getScrollHeight } from '../common';
 
 const LINK_SELECTOR = 'a[href]'; // 'a[href^="/"]';
-const CONTENT_SELECTOR = 'main';
-const LOADING_CLASS = 'is-loading';
 
 // requirements
 // object.assign, queryslector, el.match
@@ -51,17 +49,29 @@ function minDur(time) {
 export default C => class extends componentCore(C) {
 
   // @override
-  initComponent(el, props) {
-    super.initComponent(el, props);
+  componentName() {
+    return 'y-smooth-state';
+  }
 
+  startHistory() {
     this.bindCallbacks();
 
+    if (this.replaceIds.length === 0) {
+      const id = this.eventSource().id;
+      if (id) {
+        console.warn(`No replace ids provided. Will replace entire content of #${id}`); // eslint-disable-line no-console
+      } else {
+        console.error('No replace ids provided nor does this component have and id'); // eslint-disable-line no-console
+        return;
+      }
+    }
+
     if ('scrollRestoration' in history) {
-      if (this.scroll) history.scrollRestoration = 'manual';
+      if (this.scrollRestoration) history.scrollRestoration = 'manual';
       else history.scrollRestoration = 'auto';
     }
 
-    if (this.scroll) {
+    if (this.scrollRestoration) {
       this.resetScrollPostion();
       window.addEventListener('beforeunload', () => {
         this.saveScrollPosition();
@@ -105,23 +115,22 @@ export default C => class extends componentCore(C) {
     click$$.next(this.bindEvents());
   }
 
+  // @override
   setupDOM(el) {
-    // TODO: improve API
-    if (el.querySelector(this.state.contentSelector) == null) {
-      throw Error('el needs to contain content');
-    }
     return el;
   }
 
   // @override
   defaults() {
     return {
-      contentSelector: CONTENT_SELECTOR,
+      replaceIds: [],
+      // contentSelector: CONTENT_SELECTOR,
       linkSelector: LINK_SELECTOR,
-      loadingClass: LOADING_CLASS,
-      scroll: false,
+      // loadingClass: LOADING_CLASS,
+      scrollRestoration: false,
       hrefRegex: null,
       blacklist: null,
+      duration: 0,
     };
   }
 
@@ -153,18 +162,18 @@ export default C => class extends componentCore(C) {
     // } else {
     //   document.body.style.minHeight = 0;
     // }
-    document.body.classList.add(this.loadingClass);
-    this.getEl().dispatchEvent(new Event('y-smooth-state-before'));
+    // document.body.classList.add(this.loadingClass);
+    this.fireEvent('before');
   }
 
   onAfter() {
-    document.body.classList.remove(this.loadingClass);
-    this.getEl().dispatchEvent(new Event('y-smooth-state-after'));
+    // document.body.classList.remove(this.loadingClass);
+    this.fireEvent('after');
   }
 
   onError() {
-    document.body.classList.remove(this.loadingClass);
-    this.getEl().dispatchEvent(new Event('y-smooth-state-error'));
+    // document.body.classList.remove(this.loadingClass);
+    this.fireEvent('error');
   }
 
   beNice(e) {
@@ -176,7 +185,7 @@ export default C => class extends componentCore(C) {
   }
 
   bindEvents() {
-    return Observable.of(this.getEl().querySelectorAll(this.linkSelector))
+    return Observable.of(this.eventSource().querySelectorAll(this.linkSelector))
       .map(link => Observable.fromEvent(link, 'click'))
       .mergeAll()
       .filter(this.beNice)
@@ -204,7 +213,7 @@ export default C => class extends componentCore(C) {
           this.onError(e);
           return Observable.empty();
         }),
-      200
+      this.duration
     );
   }
 
@@ -214,7 +223,13 @@ export default C => class extends componentCore(C) {
     const url = hairball.ajaxResponse.request.url;
 
     // TODO: abort if content_selector not present
-    const content = documentFragment.querySelectorAll(this.contentSelector);
+    // const content = documentFragment.querySelectorAll(this.contentSelector);
+    let content;
+    if (this.replaceIds.length > 0) {
+      content = this.replaceIds.map(id => documentFragment.querySelector(`#${id}`));
+    } else {
+      content = documentFragment.getElementById(this.eventSource().id);
+    }
 
     return Object.assign(hairball, { title, url, content });
   }
@@ -231,19 +246,26 @@ export default C => class extends componentCore(C) {
 
     this.resetScrollPostion();
 
-    const oldContent = this.getEl().querySelectorAll(this.contentSelector);
+    if (this.replaceIds.length > 0) {
+      const oldContent = this.replaceIds.map(id => document.getElementById(id));
 
-    if (content.length === oldContent.length) {
-      // TODO: warn
+      // TODO: replace existing ids, remove missing ides
+      if (content.length !== oldContent.length) {
+        throw Error("New document doesn't contain the same number of ids");
+      }
+
+      Array.from(oldContent).forEach((oldElement, i) => {
+        const element = content[i];
+        oldElement.parentNode.replaceChild(element, oldElement);
+      });
+    } else {
+      const oldContent = this.eventSource();
+      oldContent.innerHTML = content.innerHTML;
     }
-
-    Array.from(oldContent).forEach((oldElement, i) => {
-      oldElement.parentNode.replaceChild(content[i], oldElement);
-    });
   }
 
   saveScrollPosition() {
-    if (this.scroll) {
+    if (this.scrollRestoration) {
       const state = history.state || {};
       state.scrollTop = getScrollTop();
       state.scrollHeight = getScrollHeight();
@@ -252,7 +274,7 @@ export default C => class extends componentCore(C) {
   }
 
   resetScrollPostion() {
-    if (this.scroll) {
+    if (this.scrollRestoration) {
       const state = history.state || {};
       setImmediate(() => {
         document.body.style.willChange = 'scroll-position';
